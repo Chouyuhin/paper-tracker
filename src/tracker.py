@@ -22,6 +22,7 @@ JOURNALS = [
 ]
 
 CROSSREF_URL = "https://api.crossref.org/works"
+SEMANTIC_URL = "https://api.semanticscholar.org/graph/v1/paper"
 QUERY = "earthquake"
 PER_PAGE = 30
 
@@ -50,7 +51,48 @@ def fetch_papers(journal_name: str, issns: List[str]) -> List[Dict]:
         if p["doi"] and p["doi"] not in seen:
             seen.add(p["doi"])
             unique.append(p)
+
+    enrich_abstracts(unique)
     return unique
+
+
+def enrich_abstracts(papers: List[Dict]):
+    """Fill missing/weak abstracts from Semantic Scholar (free, no key needed)."""
+    dois = [p["doi"] for p in papers if p["doi"] and (not p["abstract"] or len(p["abstract"]) < 50)]
+    if not dois:
+        return
+
+    # Batch query: POST /paper/search/batch with list of DOIs
+    batch_size = 20
+    for i in range(0, len(dois), batch_size):
+        batch = dois[i : i + batch_size]
+        params = [("fields", "abstract")]
+        body = {"ids": [f"DOI:{d}" for d in batch]}
+        try:
+            r = requests.post(
+                f"{SEMANTIC_URL}/batch",
+                params=params,
+                json=body,
+                timeout=30,
+            )
+            if not r.ok:
+                continue
+            results = r.json()
+            lookup = {}
+            for entry in results:
+                if entry and entry.get("abstract"):
+                    lookup[entry.get("paperId") or ""] = entry["abstract"]
+
+            # Map DOI back to our papers
+            for j, doi in enumerate(batch):
+                if j < len(results) and results[j] and results[j].get("abstract"):
+                    abstract = results[j]["abstract"]
+                    for p in papers:
+                        if p["doi"] == doi:
+                            p["abstract"] = abstract
+                            break
+        except Exception as e:
+            print(f"  [WARN] Semantic Scholar batch: {e}")
 
 
 def _extract(item: Dict, journal: str) -> Dict:
@@ -73,8 +115,9 @@ def _extract(item: Dict, journal: str) -> Dict:
             break
 
     abstract = re.sub(r"<[^>]+>", "", item.get("abstract") or "")
-    if len(abstract) > 600:
-        abstract = abstract[:597] + "…"
+    abstract = abstract.strip()
+    if len(abstract) > 300:
+        abstract = abstract[:297] + "…"
 
     return {"title": title, "authors": author_str, "journal": journal,
             "doi": doi, "url": url, "published": published, "abstract": abstract}
@@ -98,7 +141,8 @@ def build_html(all_papers: Dict[str, List[Dict]]) -> str:
             continue
         lines.append(f'<h2 style="color:#16213e;margin-top:28px;font-size:17px;">{jname}</h2><table style="width:100%;border-collapse:collapse;">')
         for i, p in enumerate(papers):
-            abs_text = f'<div style="font-size:12px;color:#555;margin-top:6px;line-height:1.5;">{p["abstract"]}</div>' if p["abstract"] else ""
+            summary = p["abstract"] or "No abstract available."
+            abs_text = f'<div style="font-size:12px;color:#444;margin-top:6px;line-height:1.5;">{summary}</div>'
             lines.append(f"""<tr><td style="padding:14px 0;border-bottom:1px solid #f0f0f0;">
 <div style="font-size:14px;font-weight:600;"><a href="{p['url']}" style="color:#0066cc;text-decoration:none;">{i+1}. {p['title']}</a></div>
 <div style="font-size:12px;color:#888;margin-top:4px;">{p['authors']} &middot; {p['published']}</div>
