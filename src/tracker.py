@@ -65,16 +65,39 @@ SECTIONS = [
 CROSSREF_URL = "https://api.crossref.org/works"
 SEMANTIC_URL = "https://api.semanticscholar.org/graph/v1/paper"
 PER_PAGE = 30
+LAST_RUN_FILE = ".last_run_date"
+
+
+# ── Date tracking ────────────────────────────────────────────────────
+
+def get_since_date() -> Optional[str]:
+    """Read the last successful run date. None = first run (get last 7 days)."""
+    try:
+        with open(LAST_RUN_FILE) as f:
+            val = f.read().strip()
+            return val if val else None
+    except FileNotFoundError:
+        return None
+
+
+def save_run_date():
+    """Write today's date as the last successful run date."""
+    with open(LAST_RUN_FILE, "w") as f:
+        f.write(datetime.now().strftime("%Y-%m-%d"))
 
 
 # ── Fetching ─────────────────────────────────────────────────────────
 
-def fetch_papers(journal: Dict, query: str, filter_type: Optional[str] = None) -> List[Dict]:
+def fetch_papers(journal: Dict, query: str, filter_type: Optional[str] = None,
+                 since_date: Optional[str] = None) -> List[Dict]:
     papers: List[Dict] = []
     for issn in journal["issns"]:
+        filter_parts = [f"issn:{issn}"]
+        if since_date:
+            filter_parts.append(f"from-index-date:{since_date}")
         params = {
             "query": query,
-            "filter": f"issn:{issn}",
+            "filter": ",".join(filter_parts),
             "sort": "published",
             "order": "desc",
             "rows": PER_PAGE,
@@ -259,13 +282,19 @@ def main():
     print(f"Paper Tracker — {datetime.now().isoformat()}")
     print("=" * 60)
 
+    since_date = get_since_date()
+    if since_date:
+        print(f"Since last run: {since_date}")
+    else:
+        print("First run — fetching recent papers only")
+
     results = []
     for sec in SECTIONS:
         print(f"\n── {sec['title']} ──")
         sec_results = {"title": sec["title"], "journals": []}
         for j in sec["journals"]:
             print(f"  {j['name']} …", end=" ", flush=True)
-            papers = fetch_papers(j, sec["query"], sec.get("filter"))
+            papers = fetch_papers(j, sec["query"], sec.get("filter"), since_date)
             if sec["max"] is not None:
                 papers = papers[: sec["max"]]
             sec_results["journals"].append({"name": j["name"], "papers": papers})
@@ -276,11 +305,13 @@ def main():
     print(f"\nTotal: {total} paper(s)")
 
     if not total:
-        print("No papers found — skip email.")
+        print("No new papers — skip email.")
         return
 
     html = build_html(results)
     send_email(html)
+    save_run_date()
+    print("Last run date saved.")
     print("Email sent successfully!")
 
 
