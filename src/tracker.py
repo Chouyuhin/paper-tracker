@@ -21,6 +21,7 @@ CORE_JOURNALS = [
     {"name": "Physical Review Letters",           "issns": ["0031-9007", "1079-7114"]},
     {"name": "Physical Review E",                 "issns": ["1539-3755", "2470-0053"]},
     {"name": "J. American Statistical Association","issns": ["0162-1459", "1537-274X"]},
+    {"name": "BSSA",                              "issns": ["0037-1106", "1943-3573"]},
 ]
 
 NEW_JOURNALS = [
