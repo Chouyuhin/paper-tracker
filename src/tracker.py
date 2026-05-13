@@ -10,7 +10,7 @@ import smtplib
 import ssl
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import List, Dict, Optional
 
 import requests
@@ -72,7 +72,7 @@ LAST_RUN_FILE = ".last_run_date"
 # ── Date tracking ────────────────────────────────────────────────────
 
 def get_since_date() -> Optional[str]:
-    """Read the last successful run date. None = first run (get last 7 days)."""
+    """Read the last successful run date. None = first run."""
     try:
         with open(LAST_RUN_FILE) as f:
             val = f.read().strip()
@@ -82,9 +82,22 @@ def get_since_date() -> Optional[str]:
 
 
 def save_run_date():
-    """Write today's date as the last successful run date."""
     with open(LAST_RUN_FILE, "w") as f:
         f.write(datetime.now().strftime("%Y-%m-%d"))
+
+
+def pub_date_after(pub_str: str, since: str) -> bool:
+    """Check if a publication date string is after the cutoff."""
+    if not pub_str:
+        return False
+    for fmt in ("%Y-%m-%d", "%Y-%m", "%Y"):
+        try:
+            pub = datetime.strptime(pub_str, fmt)
+            cutoff = datetime.strptime(since, "%Y-%m-%d")
+            return pub >= cutoff
+        except ValueError:
+            continue
+    return False
 
 
 # ── Fetching ─────────────────────────────────────────────────────────
@@ -93,12 +106,9 @@ def fetch_papers(journal: Dict, query: str, filter_type: Optional[str] = None,
                  since_date: Optional[str] = None) -> List[Dict]:
     papers: List[Dict] = []
     for issn in journal["issns"]:
-        filter_parts = [f"issn:{issn}"]
-        if since_date:
-            filter_parts.append(f"from-index-date:{since_date}")
         params = {
             "query": query,
-            "filter": ",".join(filter_parts),
+            "filter": f"issn:{issn}",
             "sort": "published",
             "order": "desc",
             "rows": PER_PAGE,
@@ -285,9 +295,10 @@ def main():
 
     since_date = get_since_date()
     if since_date:
-        print(f"Since last run: {since_date}")
+        print(f"Papers published since: {since_date}")
     else:
-        print("First run — fetching recent papers only")
+        since_date = (datetime.now() - timedelta(days=7)).strftime("%Y-%m-%d")
+        print(f"First run — fetching papers since {since_date}")
 
     results = []
     for sec in SECTIONS:
@@ -295,7 +306,9 @@ def main():
         sec_results = {"title": sec["title"], "journals": []}
         for j in sec["journals"]:
             print(f"  {j['name']} …", end=" ", flush=True)
-            papers = fetch_papers(j, sec["query"], sec.get("filter"), since_date)
+            papers = fetch_papers(j, sec["query"], sec.get("filter"))
+            # Keep only papers published since last run
+            papers = [p for p in papers if pub_date_after(p["published"], since_date)]
             if sec["max"] is not None:
                 papers = papers[: sec["max"]]
             sec_results["journals"].append({"name": j["name"], "papers": papers})

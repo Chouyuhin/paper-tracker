@@ -3,8 +3,8 @@ name: Daily Paper Digest
 on:
   schedule:
     # 每天 UTC 12:00 ≈ 北京时间 20:00 / 美东 08:00
-    # 12:00 UTC = 8:00 AM EDT (夏令时) / 7:00 AM EST (冬令时)
-    - cron: "0 12 * * *"
+    # 11:45 UTC ≈ 7:45 AM EDT (GitHub Actions 有延迟, 实际到 8 点左右)
+    - cron: "45 11 * * *"
   workflow_dispatch: # 允许手动触发
 
 permissions:
