@@ -8,6 +8,7 @@ import os
 import re
 import smtplib
 import ssl
+import xml.etree.ElementTree as ET
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from datetime import datetime, timedelta
@@ -61,10 +62,20 @@ SECTIONS = [
         "max":      3,
         "filter":   "statistical_seismology",
     },
+    {
+        "tag":      "arXiv",
+        "title":    "arXiv Preprints",
+        "source":   "arxiv",
+        "query":    "earthquake",
+        "categories": ["physics.geo-ph", "stat.AP"],
+        "max":      5,
+        "filter":   None,
+    },
 ]
 
 CROSSREF_URL = "https://api.crossref.org/works"
 SEMANTIC_URL = "https://api.semanticscholar.org/graph/v1/paper"
+ARXIV_URL = "http://export.arxiv.org/api/query"
 PER_PAGE = 30
 LAST_RUN_FILE = ".last_run_date"
 
@@ -159,6 +170,53 @@ def enrich_abstracts(papers: List[Dict]):
                             break
         except Exception as e:
             print(f"  [WARN] Semantic Scholar batch: {e}")
+
+
+# ── arXiv API ────────────────────────────────────────────────────────
+
+ARXIV_NS = {
+    "atom": "http://www.w3.org/2005/Atom",
+    "arxiv": "http://arxiv.org/schemas/atom",
+}
+
+
+def fetch_arxiv(query: str, categories: List[str], max_results: int = 20) -> List[Dict]:
+    """Fetch papers from arXiv API."""
+    cat_q = "+OR+".join(f"cat:{c}" for c in categories)
+    full_query = f"({cat_q})+AND+all:{query}"
+    url = f"{ARXIV_URL}?search_query={full_query}&sortBy=submittedDate&sortOrder=descending&max_results={max_results}"
+
+    papers: List[Dict] = []
+    try:
+        r = requests.get(url, timeout=30)
+        r.raise_for_status()
+        root = ET.fromstring(r.content)
+
+        for entry in root.findall("atom:entry", ARXIV_NS):
+            title = re.sub(r"\s+", " ", (entry.find("atom:title", ARXIV_NS).text or "").strip())
+            authors = [a.find("atom:name", ARXIV_NS).text for a in entry.findall("atom:author", ARXIV_NS)]
+            author_str = "; ".join(authors[:5]) + ("; et al." if len(authors) > 5 else "")
+
+            doi_el = entry.find("arxiv:doi", ARXIV_NS)
+            doi = doi_el.text if doi_el is not None else ""
+            arxiv_id = re.sub(r"^https?://arxiv\.org/abs/", "", entry.find("atom:id", ARXIV_NS).text.strip())
+            url_link = f"https://arxiv.org/abs/{arxiv_id}"
+
+            published = (entry.find("atom:published", ARXIV_NS).text or "")[:10]
+
+            abstract = re.sub(r"\s+", " ", (entry.find("atom:summary", ARXIV_NS).text or "").strip())
+            if len(abstract) > 300:
+                abstract = abstract[:297] + "…"
+
+            papers.append({
+                "title": title, "authors": author_str, "journal": "arXiv",
+                "doi": doi, "url": url_link, "published": published,
+                "abstract": abstract,
+            })
+    except Exception as e:
+        print(f"  [WARN] arXiv API: {e}")
+
+    return papers
 
 
 def _extract(item: Dict, journal: str) -> Dict:
@@ -304,15 +362,24 @@ def main():
     for sec in SECTIONS:
         print(f"\n── {sec['title']} ──")
         sec_results = {"title": sec["title"], "journals": []}
-        for j in sec["journals"]:
-            print(f"  {j['name']} …", end=" ", flush=True)
-            papers = fetch_papers(j, sec["query"], sec.get("filter"))
-            # Keep only papers published since last run
+
+        if sec.get("source") == "arxiv":
+            papers = fetch_arxiv(sec["query"], sec["categories"])
             papers = [p for p in papers if pub_date_after(p["published"], since_date)]
             if sec["max"] is not None:
                 papers = papers[: sec["max"]]
-            sec_results["journals"].append({"name": j["name"], "papers": papers})
-            print(f"{len(papers)} paper{'s' if len(papers) != 1 else ''}")
+            sec_results["journals"].append({"name": "arXiv", "papers": papers})
+            print(f"  arXiv … {len(papers)} paper{'s' if len(papers) != 1 else ''}")
+        else:
+            for j in sec["journals"]:
+                print(f"  {j['name']} …", end=" ", flush=True)
+                papers = fetch_papers(j, sec["query"], sec.get("filter"))
+                papers = [p for p in papers if pub_date_after(p["published"], since_date)]
+                if sec["max"] is not None:
+                    papers = papers[: sec["max"]]
+                sec_results["journals"].append({"name": j["name"], "papers": papers})
+                print(f"{len(papers)} paper{'s' if len(papers) != 1 else ''}")
+
         results.append(sec_results)
 
     total = sum(len(jr["papers"]) for sec in results for jr in sec["journals"])
