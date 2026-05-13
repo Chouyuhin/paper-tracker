@@ -71,6 +71,22 @@ SECTIONS = [
         "max":      5,
         "filter":   None,
     },
+    {
+        "tag":      "Clustering",
+        "title":    "Earthquake Clustering & Declustering",
+        "query":    "earthquake clustering declustering",
+        "journals": NEW_JOURNALS,
+        "max":      3,
+        "filter":   "clustering",
+    },
+    {
+        "tag":      "EQChars",
+        "title":    "Earthquake Source & Characteristics",
+        "query":    "earthquake source rupture characteristics",
+        "journals": NEW_JOURNALS,
+        "max":      3,
+        "filter":   "characteristics",
+    },
 ]
 
 CROSSREF_URL = "https://api.crossref.org/works"
@@ -275,6 +291,35 @@ def filter_papers(papers: List[Dict], filter_type: Optional[str]) -> List[Dict]:
                  "earthquake clustering", "seismic hazard", "recurrence interval",
                  "interevent time", "magnitude distribution", "b value", "b-value",
                  "gutenberg-richter", "aftershock decay", "omori"]
+        kept = []
+        for p in papers:
+            t = (p["title"] + " " + p["abstract"]).lower()
+            if any(term in t for term in terms):
+                kept.append(p)
+        return kept
+
+    if filter_type == "clustering":
+        terms = ["clustering", "declustering", "etas", "epidemic type",
+                 "space-time cluster", "spatiotemporal cluster", "earthquake swarm",
+                 "cluster analysis", "nearest-neighbor", "nearest neighbor",
+                 "epidemic-type", "branching model", "triggering"]
+        ctx = ["earthquake", "seismic", "seismolog", "fault", "aftershock",
+               "tectonic", "hypocenter", "epicenter", "magnitude"]
+        kept = []
+        for p in papers:
+            t = (p["title"] + " " + p["abstract"]).lower()
+            if any(term in t for term in terms) and any(c in t for c in ctx):
+                kept.append(p)
+        return kept
+
+    if filter_type == "characteristics":
+        terms = ["source parameter", "rupture", "magnitude distribution",
+                 "stress drop", "source characteristic", "fault slip",
+                 "rupture propagation", "seismic moment", "slip distribution",
+                 "moment magnitude", "corner frequency", "radiation pattern",
+                 "source time function", "rupture velocity", "slip rate",
+                 "magnitude scaling", "ground motion", "attenuation",
+                 "site effect", "directivity"]
         kept = []
         for p in papers:
             t = (p["title"] + " " + p["abstract"]).lower()
