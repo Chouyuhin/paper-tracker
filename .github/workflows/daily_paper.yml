@@ -2,10 +2,9 @@ name: Daily Paper Digest
 
 on:
   schedule:
-    # 每天 UTC 12:00 ≈ 北京时间 20:00 / 美东 08:00
-    # 11:45 UTC ≈ 7:45 AM EDT (GitHub Actions 有延迟, 实际到 8 点左右)
-    - cron: "45 11 * * *"
-  workflow_dispatch: # 允许手动触发
+    # 每 15 分钟跑一次检查, 直到当天任务完成
+    - cron: "*/15 7-15 * * *"
+  workflow_dispatch:
 
 permissions:
   contents: write
@@ -15,12 +14,28 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+
+      - name: Check if already ran today
+        id: check
+        run: |
+          if [ -f .last_run_date ] && [ "$(cat .last_run_date)" = "$(date +%Y-%m-%d)" ]; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            echo "Already ran today — skipping"
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+
       - uses: actions/setup-python@v5
+        if: steps.check.outputs.skip == 'false'
         with:
           python-version: "3.11"
+
       - name: Install dependencies
+        if: steps.check.outputs.skip == 'false'
         run: pip install -r requirements.txt
+
       - name: Fetch papers and send email
+        if: steps.check.outputs.skip == 'false'
         env:
           SMTP_SERVER:   ${{ secrets.SMTP_SERVER }}
           SMTP_PORT:     ${{ secrets.SMTP_PORT }}
@@ -29,7 +44,9 @@ jobs:
           EMAIL_FROM:    ${{ secrets.EMAIL_FROM }}
           EMAIL_TO:      ${{ secrets.EMAIL_TO }}
         run: python src/tracker.py
+
       - name: Commit last run date
+        if: steps.check.outputs.skip == 'false'
         run: |
           git config user.name "paper-tracker-bot"
           git config user.email "bot@localhost"
