@@ -2,8 +2,8 @@ name: Daily Paper Digest
 
 on:
   schedule:
-    # 每 15 分钟, 只在 12-13 UTC (≈ 8-9 AM EDT) 窗口内触发
-    - cron: "*/15 12-13 * * *"
+    # 每 30 分钟, 宽窗口 (自检确保一天只发一次)
+    - cron: "*/30 10-16 * * *"
   workflow_dispatch:
 
 permissions:
