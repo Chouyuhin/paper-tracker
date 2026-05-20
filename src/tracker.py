@@ -80,6 +80,14 @@ SECTIONS = [
         "filter":   "clustering",
     },
     {
+        "tag":      "MLSeismo",
+        "title":    "Machine Learning in Seismology",
+        "query":    "machine learning earthquake seismology deep learning",
+        "journals": NEW_JOURNALS,
+        "max":      3,
+        "filter":   "ml_seismology",
+    },
+    {
         "tag":      "EQChars",
         "title":    "Earthquake Source & Characteristics",
         "query":    "earthquake source rupture characteristics",
@@ -299,16 +307,34 @@ def filter_papers(papers: List[Dict], filter_type: Optional[str]) -> List[Dict]:
         return kept
 
     if filter_type == "clustering":
-        terms = ["clustering", "declustering", "etas", "epidemic type",
-                 "space-time cluster", "spatiotemporal cluster", "earthquake swarm",
-                 "cluster analysis", "nearest-neighbor", "nearest neighbor",
-                 "epidemic-type", "branching model", "triggering"]
+        terms = ["clustering", "clustered", "declustering", "etas",
+                 "epidemic type", "space-time cluster", "spatiotemporal cluster",
+                 "earthquake swarm", "cluster analysis", "nearest-neighbor",
+                 "nearest neighbor", "epidemic-type", "branching model",
+                 "triggering", "categorization", "categorize"]
         ctx = ["earthquake", "seismic", "seismolog", "fault", "aftershock",
                "tectonic", "hypocenter", "epicenter", "magnitude"]
         kept = []
         for p in papers:
             t = (p["title"] + " " + p["abstract"]).lower()
             if any(term in t for term in terms) and any(c in t for c in ctx):
+                kept.append(p)
+        return kept
+
+    if filter_type == "ml_seismology":
+        ml = ["machine learning", "deep learning", "neural network", "unsupervised",
+              "supervised learning", "random forest", "support vector",
+              "convolutional", "transformer", "graph neural", "reinforcement learning",
+              "classification", "regression", "clustering", "dimensionality reduction",
+              "autoencoder", "generative adversarial", "transfer learning",
+              "feature extraction", "pattern recognition", "anomaly detection",
+              "categorization", "categorize", "embedding"]
+        ctx = ["earthquake", "seismic", "seismolog", "fault", "tsunami",
+               "magnitude", "hypocenter", "epicenter", "tectonic"]
+        kept = []
+        for p in papers:
+            t = (p["title"] + " " + p["abstract"]).lower()
+            if any(m in t for m in ml) and any(c in t for c in ctx):
                 kept.append(p)
         return kept
 
