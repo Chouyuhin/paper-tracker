@@ -16,6 +16,8 @@ from typing import List, Dict, Optional
 
 import requests
 
+import agent
+
 # ── Journal definitions ──────────────────────────────────────────────
 
 CORE_JOURNALS = [
@@ -386,11 +388,30 @@ def build_html(results: List[Dict]) -> str:
 <h3 style="font-size:15px;color:#333;margin:16px 0 6px;">{jr['name']} <span style="font-weight:400;color:#888;font-size:13px;">({len(papers)} paper{'s' if len(papers) != 1 else ''})</span></h3>
 <table style="width:100%;border-collapse:collapse;">""")
             for i, p in enumerate(papers):
-                summary = p["abstract"] or "No abstract available."
+                # Prefer the agent's plain-language finding; fall back to abstract.
+                summary = p.get("finding") or p["abstract"] or "No abstract available."
+
+                meta_bits = []
+                if p.get("method") and p["method"] not in ("", "N/A"):
+                    meta_bits.append(f"<b>Method:</b> {p['method']}")
+                if p.get("dataset") and p["dataset"] not in ("", "N/A"):
+                    meta_bits.append(f"<b>Data:</b> {p['dataset']}")
+                extra = (
+                    f"""<div style="font-size:11px;color:#666;margin-top:4px;">{' &middot; '.join(meta_bits)}</div>"""
+                    if meta_bits else ""
+                )
+
+                rel = p.get("relevance")
+                badge = (
+                    f"""<span style="display:inline-block;font-size:10px;font-weight:600;color:#0a7d3c;background:#e8f5ec;border-radius:3px;padding:1px 5px;margin-left:6px;vertical-align:middle;">{rel}</span>"""
+                    if isinstance(rel, int) else ""
+                )
+
                 lines.append(f"""<tr><td style="padding:10px 0;border-bottom:1px solid #f0f0f0;">
-<div style="font-size:13px;font-weight:600;"><a href="{p['url']}" style="color:#0066cc;text-decoration:none;">{i+1}. {p['title']}</a></div>
+<div style="font-size:13px;font-weight:600;"><a href="{p['url']}" style="color:#0066cc;text-decoration:none;">{i+1}. {p['title']}</a>{badge}</div>
 <div style="font-size:11px;color:#888;margin-top:2px;">{p['authors']} &middot; {p['published']}</div>
 <div style="font-size:12px;color:#444;margin-top:4px;line-height:1.5;">{summary}</div>
+{extra}
 </td></tr>""")
             lines.append("</table>")
 
@@ -453,11 +474,19 @@ def main():
 
         results.append(sec_results)
 
-    total = sum(len(jr["papers"]) for sec in results for jr in sec["journals"])
-    print(f"\nTotal: {total} paper(s)")
-
-    if not total:
+    fetched = sum(len(jr["papers"]) for sec in results for jr in sec["journals"])
+    print(f"\nFetched: {fetched} paper(s)")
+    if not fetched:
         print("No new papers — skip email.")
+        return
+
+    print("\n── Agent enrichment ──")
+    results = agent.enrich(results)
+
+    total = sum(len(jr["papers"]) for sec in results for jr in sec["journals"])
+    print(f"Relevant after agent: {total} paper(s)")
+    if not total:
+        print("No relevant papers — skip email.")
         return
 
     html = build_html(results)
