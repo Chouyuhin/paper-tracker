@@ -39,6 +39,57 @@ NEW_JOURNALS = [
     {"name": "Communications Earth & Environment","issns": ["2662-4435"]},
 ]
 
+# ── LLM / RAG-for-geoscience topic sections ──────────────────────────
+#
+# arXiv's `all:` prefix binds only the first bare token, so a multi-word
+# query like `all:retrieval augmented generation` silently degrades into
+# "the newest cs.CL papers" (~160k hits). Phrases must be quoted and groups
+# ANDed explicitly, hence this pre-built expression instead of a query word.
+# Passed to fetch_arxiv() as `expr`.
+RAG_GEO_ARXIV_EXPR = (
+    '(all:"large language model"'
+    '+OR+all:"retrieval augmented generation"'
+    '+OR+all:"retrieval-augmented generation"'
+    '+OR+all:"foundation model"'
+    "+OR+all:LLM"
+    "+OR+all:agentic)"
+    "+AND+"
+    "(all:geoscience+OR+all:geophysics+OR+all:seismic"
+    "+OR+all:earthquake+OR+all:seismology)"
+)
+
+# Per-section agent rubric (see agent.enrich). This section is judged on
+# "LLM/RAG methods for geoscience" rather than on earthquake-ness, which is
+# what agent.SYSTEM and the default tool schema encode.
+RAG_GEO_AGENT = {
+    "topic": (
+        "research that applies large language models, retrieval-augmented "
+        "generation, knowledge graphs, foundation models or LLM agents to "
+        "earthquake science or the wider geosciences"
+    ),
+    "offtopic": (
+        "applies these methods to an unrelated domain, or describes a "
+        "geoscience study with no language-model component"
+    ),
+    "prompt": (
+        "You are a research assistant for a seismologist who is building "
+        "retrieval-augmented-generation and LLM-agent tooling for earthquake "
+        "science. For each paper, judge how relevant it is to that goal. "
+        "Score high only when BOTH halves are present: (a) a language-model "
+        "method — large language models, retrieval-augmented generation, "
+        "knowledge graphs, foundation models, in-context learning, prompting, "
+        "or LLM/AI agents — and (b) an application to earthquakes, seismology, "
+        "or the solid-Earth / geoscience domain. Score low for LLM papers with "
+        "no geoscience application, and for geoscience papers with no "
+        "language-model component. Score very low for language models applied "
+        "to unrelated domains such as biology, medicine, protein or genomic "
+        "language models, clinical reasoning, or general NLP benchmarks. "
+        "Also extract the paper's key scientific content. Ground every field "
+        "in the title and abstract provided — do not invent details."
+    ),
+    "threshold": 55,
+}
+
 SECTIONS = [
     {
         "tag":      "Earthquake",
@@ -55,6 +106,30 @@ SECTIONS = [
         "journals": NEW_JOURNALS,
         "max":      3,
         "filter":   "knowledge_graph",
+    },
+    {
+        # Precision comes from the boolean search_query itself; filter_papers()
+        # is never applied to arXiv sections (it lives inside fetch_papers).
+        "tag":      "RAGGeoArxiv",
+        "title":    "LLM & RAG for Geoscience (arXiv)",
+        "source":   "arxiv",
+        "query":    "",                    # unused: `expr` takes precedence
+        "expr":     RAG_GEO_ARXIV_EXPR,
+        "categories": ["cs.CL", "cs.IR", "cs.AI", "physics.geo-ph"],
+        "max":      5,
+        "filter":   None,
+        "agent":    RAG_GEO_AGENT,
+    },
+    {
+        # CrossRef sorts by publication date, so `query` barely narrows
+        # anything here — the keyword filter carries all of the precision.
+        "tag":      "RAGGeoJournals",
+        "title":    "LLM & RAG for Geoscience (Journals)",
+        "query":    "retrieval augmented generation large language model geoscience",
+        "journals": NEW_JOURNALS,
+        "max":      2,
+        "filter":   "rag_llm_geoscience",
+        "agent":    RAG_GEO_AGENT,
     },
     {
         "tag":      "StatSeismo",
@@ -206,10 +281,19 @@ ARXIV_NS = {
 }
 
 
-def fetch_arxiv(query: str, categories: List[str], max_results: int = 20) -> List[Dict]:
-    """Fetch papers from arXiv API."""
+def fetch_arxiv(query: str, categories: List[str], max_results: int = 20,
+                expr: Optional[str] = None) -> List[Dict]:
+    """Fetch papers from arXiv API.
+
+    `query` is wrapped as a single `all:` term (historical behaviour). arXiv
+    binds only the first bare token to `all:`, so a multi-word query silently
+    matches almost everything — pass `expr` instead to supply a complete arXiv
+    boolean term expression (quoted phrases, `+OR+`/`+AND+` groups). It is
+    ANDed with the category group.
+    """
     cat_q = "+OR+".join(f"cat:{c}" for c in categories)
-    full_query = f"({cat_q})+AND+all:{query}"
+    term_q = f"({expr})" if expr else f"all:{query}"
+    full_query = f"({cat_q})+AND+{term_q}"
     url = f"{ARXIV_URL}?search_query={full_query}&sortBy=submittedDate&sortOrder=descending&max_results={max_results}"
 
     papers: List[Dict] = []
@@ -273,6 +357,48 @@ def _extract(item: Dict, journal: str) -> Dict:
             "doi": doi, "url": url, "published": published, "abstract": abstract}
 
 
+# Word-boundary regexes, not the substring `in` tests the other filters use:
+# bare "rag" would match sto-rag-e / ave-rag-e / f-rag-ment / agg-rag-ate, and
+# "llm" has the same hazard. Multi-word terms are safe either way.
+_RAG_METHOD_RE = re.compile("|".join([
+    r"retrieval[-\s]?augmented",
+    r"\brags?\b",
+    r"\bllms?\b",
+    r"large language model",
+    r"language model",
+    r"foundation model",
+    r"in[-\s]context learning",
+    r"vector (?:database|store|index)",
+    # Bare "prompt" is excluded on purpose: "the data prompted a reassessment"
+    # is everyday geoscience prose.
+    r"prompt engineering",
+    r"prompt(?:ing)? (?:strateg|template|design)",
+    r"chain[-\s]of[-\s]thought",
+    r"\bgpt[-\s]?[0-9o]",
+    r"\bchatgpt\b",
+    r"generative (?:ai|pre[-\s]?trained)",
+    # Bare "agent" would match "contrast agent" and agent-based social models.
+    r"\bagentic\b",
+    r"\b(?:ai|llm|language|autonomous|multi|software)[-\s]agents?\b",
+    r"\bknowledge graph\b",
+    # "transformer" is deliberately absent: in geophysics it is an electrical
+    # transformer, and it already belongs to the ml_seismology section.
+]))
+
+# Deliberately broader than earthquakes — the brief is "earthquake or
+# geoscience". Bare "fault"/"hazard" are excluded ("fault-tolerant" and
+# "fault diagnosis" are ubiquitous in CS; "hazard ratio" in medicine).
+_RAG_CONTEXT_RE = re.compile("|".join([
+    r"earthquake", r"seismic", r"seismolog", r"seismogram",
+    r"geoscien", r"geophysic", r"geolog", r"geospatial", r"geochem",
+    r"tectonic", r"subduction", r"tsunami", r"volcan", r"aftershock",
+    r"hypocent", r"epicent", r"ground motion", r"waveform inversion",
+    r"earth science", r"earth system", r"solid earth",
+    r"fault zone", r"fault slip", r"landslide", r"stratigraph",
+    r"remote sensing", r"hydrolog", r"climate", r"atmospher", r"ocean",
+]))
+
+
 def filter_papers(papers: List[Dict], filter_type: Optional[str]) -> List[Dict]:
     """Post-filter papers for topic-specific relevance."""
     if filter_type is None:
@@ -291,6 +417,18 @@ def filter_papers(papers: List[Dict], filter_type: Optional[str]) -> List[Dict]:
         for p in papers:
             t = (p["title"] + " " + p["abstract"]).lower()
             if any(k in t for k in kg) and any(c in t for c in ctx):
+                kept.append(p)
+        return kept
+
+    if filter_type == "rag_llm_geoscience":
+        # Require BOTH a language-model method term and a geoscience context
+        # term. CrossRef's `query` is near-useless here — sort=published makes
+        # it return the journal's newest papers regardless of match — so this
+        # filter carries all of the precision for that section.
+        kept = []
+        for p in papers:
+            t = (p["title"] + " " + p["abstract"]).lower()
+            if _RAG_METHOD_RE.search(t) and _RAG_CONTEXT_RE.search(t):
                 kept.append(p)
         return kept
 
@@ -454,9 +592,12 @@ def main():
     for sec in SECTIONS:
         print(f"\n── {sec['title']} ──")
         sec_results = {"title": sec["title"], "journals": []}
+        if sec.get("agent"):
+            sec_results["agent"] = sec["agent"]
 
         if sec.get("source") == "arxiv":
-            papers = fetch_arxiv(sec["query"], sec["categories"])
+            papers = fetch_arxiv(sec["query"], sec["categories"],
+                                 expr=sec.get("expr"))
             papers = [p for p in papers if pub_date_after(p["published"], since_date)]
             if sec["max"] is not None:
                 papers = papers[: sec["max"]]
